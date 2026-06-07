@@ -3,13 +3,15 @@
 main.py — IRC-style Discord terminal proxy.
 
 Commands once connected:
-    /me <text>   — send an action
-    /topic       — show channel topic
-    /list        — list channels
-    /join        — switch channel
-    /clear       — clear screen
-    /help        — list commands
-    /quit        — disconnect and exit
+    /me <text>       — send an action
+    /topic           — show channel topic
+    /list            — list channels
+    /join            — switch channel
+    /clear           — clear screen
+    /help            — list commands
+    /quit            — disconnect and exit
+    /translate <lang> — translate outgoing messages ending in -r to <lang> (e.g. ru, de, ja)
+    /translate off   — disable outgoing translation
 """
 
 from __future__ import annotations
@@ -28,7 +30,6 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style
 
 try:
-    from langdetect import detect, LangDetectException
     from deep_translator import GoogleTranslator
     _TRANSLATE_AVAILABLE = True
 except ImportError:
@@ -48,6 +49,7 @@ intents.members = True
 client = discord.Client(intents=intents)
 selected_channel: discord.TextChannel | None = None
 selected_guild: discord.Guild | None = None
+outgoing_lang: str | None = None  # e.g. "ru"; None = disabled
 
 _STYLE = Style.from_dict({
     "prompt-nick":    "#00ff88 bold",
@@ -91,20 +93,28 @@ def encode_mentions(text: str) -> str:
     return re.sub(r"@([\w][\w ]{0,30}[\w]|[\w]+)", replace, text)
 
 
-# ── translation helper ────────────────────────────────────────────────────────
+# ── translation helpers ───────────────────────────────────────────────────────
 
 def maybe_translate(content: str) -> str:
+    """Translate incoming non-English messages to English."""
     if not _TRANSLATE_AVAILABLE or not content.strip():
         return content
     try:
-        if detect(content) == "ru":
-            translated = GoogleTranslator(source="ru", target="en").translate(content)
+        translated = GoogleTranslator(source="auto", target="en").translate(content)
+        if translated and translated.lower() != content.lower():
             return f"{content}\x1b[90m  [{translated}]\x1b[0m"
-    except LangDetectException:
-        pass
     except Exception:
         pass
     return content
+
+
+def translate_outgoing(text: str, lang: str) -> str | None:
+    """Translate text to lang. Returns translated string or None on failure."""
+    try:
+        return GoogleTranslator(source="auto", target=lang).translate(text)
+    except Exception as e:
+        print_error(f"Translation failed: {e}")
+        return None
 
 
 # ── display helpers ───────────────────────────────────────────────────────────
@@ -155,7 +165,7 @@ async def on_ready():
 
     print_status(f"Connected as {client.user}")
     if not _TRANSLATE_AVAILABLE:
-        print_status("Auto-translate disabled (run: pip install deep-translator langdetect)")
+        print_status("Auto-translate disabled (run: pip install deep-translator)")
 
     guilds = sorted(client.guilds, key=lambda g: g.name.lower())
     if not guilds:
@@ -258,6 +268,8 @@ async def on_message(message):
 # ── live input loop ───────────────────────────────────────────────────────────
 
 async def stdin_loop():
+    global outgoing_lang
+
     session: PromptSession = PromptSession(
         history=InMemoryHistory(),
         style=_STYLE,
@@ -266,9 +278,10 @@ async def stdin_loop():
     def _prompt() -> HTML:
         nick = client.user.display_name if client.user else "?"
         chan = selected_channel.name if selected_channel else "?"
+        lang_tag = f" →{outgoing_lang}" if outgoing_lang else ""
         return HTML(
             f"<prompt-nick>[{nick}]</prompt-nick>"
-            f"<prompt-channel> #{chan}&gt;</prompt-channel> "
+            f"<prompt-channel> #{chan}{lang_tag}&gt;</prompt-channel> "
         )
 
     with patch_stdout():
@@ -289,6 +302,14 @@ async def stdin_loop():
                 args = parts[1].split() if len(parts) > 1 else []
                 await handle_command(cmd, args)
             else:
+                # outgoing translation: message ending with -r triggers translate
+                if outgoing_lang and line.endswith("-r"):
+                    text = line[:-2].rstrip()
+                    translated = translate_outgoing(text, outgoing_lang)
+                    if translated is None:
+                        continue  # error already printed
+                    print_status(f"→ {translated}")
+                    line = translated
                 try:
                     await selected_channel.send(encode_mentions(line))
                 except Exception as e:
@@ -296,6 +317,8 @@ async def stdin_loop():
 
 
 async def handle_command(cmd: str, args: list[str]) -> None:
+    global outgoing_lang
+
     if cmd in ("quit", "exit"):
         print_status("Disconnecting...")
         await client.close()
@@ -330,15 +353,28 @@ async def handle_command(cmd: str, args: list[str]) -> None:
     elif cmd == "clear":
         print("\x1b[2J\x1b[H", end="")
 
+    elif cmd == "translate":
+        if not _TRANSLATE_AVAILABLE:
+            print_error("deep-translator not installed.")
+            return
+        if not args or args[0].lower() == "off":
+            outgoing_lang = None
+            print_status("Outgoing translation disabled.")
+        else:
+            outgoing_lang = args[0].lower()
+            print_status(f"Outgoing translation enabled → {outgoing_lang}  (end messages with -r to translate)")
+
     elif cmd == "help":
         print_sep("COMMANDS")
         for line in [
-            "/me <text>   — send an action",
-            "/topic       — show channel topic",
-            "/list        — list channels",
-            "/join        — switch channel",
-            "/clear       — clear screen",
-            "/quit        — disconnect",
+            "/me <text>          — send an action",
+            "/topic              — show channel topic",
+            "/list               — list channels",
+            "/join               — switch channel",
+            "/clear              — clear screen",
+            "/translate <lang>   — translate outgoing msgs ending in -r (e.g. ru, de, ja)",
+            "/translate off      — disable outgoing translation",
+            "/quit               — disconnect",
         ]:
             print(f"  {line}")
         print_sep()
