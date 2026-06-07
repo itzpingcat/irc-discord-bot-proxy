@@ -224,15 +224,12 @@ async def _pick_channel():
 
     if backfill:
         print_sep("HISTORY")
-        msgs = []
-        async for m in selected_channel.history(limit=backfill):
+        async for m in selected_channel.history(limit=backfill, oldest_first=True):
             content = resolve_mentions(m.content or "")
             if m.attachments:
                 content += " [file: " + " ".join(a.url for a in m.attachments) + "]"
-            msgs.append((m.author.display_name, content, m.created_at))
-        for author, content, dt in reversed(msgs):
             content = maybe_translate(content)
-            _print(f"\x1b[90m[{dt.strftime('%H:%M')}]\x1b[0m \x1b[1m<\x1b[0m\x1b[94m{author}\x1b[0m\x1b[1m>\x1b[0m {content}")
+            _print(f"\x1b[90m[{m.created_at.strftime('%H:%M')}]\x1b[0m \x1b[1m<\x1b[0m\x1b[94m{m.author.display_name}\x1b[0m\x1b[1m>\x1b[0m {content}")
 
     print_sep("LIVE")
     print_status(f"Joined #{selected_channel.name} in {selected_guild.name}")
