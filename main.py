@@ -224,7 +224,10 @@ async def _pick_channel():
 
     if backfill:
         print_sep("HISTORY")
-        async for m in selected_channel.history(limit=backfill, oldest_first=True):
+        msgs = []
+        async for m in selected_channel.history(limit=backfill):
+            msgs.append(m)
+        for m in sorted(msgs, key=lambda m: m.created_at):
             content = resolve_mentions(m.content or "")
             if m.attachments:
                 content += " [file: " + " ".join(a.url for a in m.attachments) + "]"
