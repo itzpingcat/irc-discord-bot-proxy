@@ -27,6 +27,13 @@ from prompt_toolkit.formatted_text import ANSI, HTML
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style
 
+try:
+    from langdetect import detect, LangDetectException
+    from deep_translator import GoogleTranslator
+    _TRANSLATE_AVAILABLE = True
+except ImportError:
+    _TRANSLATE_AVAILABLE = False
+
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 if not TOKEN:
     print("Error: DISCORD_BOT_TOKEN environment variable not set.")
@@ -84,6 +91,22 @@ def encode_mentions(text: str) -> str:
     return re.sub(r"@([\w][\w ]{0,30}[\w]|[\w]+)", replace, text)
 
 
+# ── translation helper ────────────────────────────────────────────────────────
+
+def maybe_translate(content: str) -> str:
+    if not _TRANSLATE_AVAILABLE or not content.strip():
+        return content
+    try:
+        if detect(content) == "ru":
+            translated = GoogleTranslator(source="ru", target="en").translate(content)
+            return f"{content}\x1b[90m  [{translated}]\x1b[0m"
+    except LangDetectException:
+        pass
+    except Exception:
+        pass
+    return content
+
+
 # ── display helpers ───────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -131,6 +154,8 @@ async def on_ready():
     global selected_channel, selected_guild
 
     print_status(f"Connected as {client.user}")
+    if not _TRANSLATE_AVAILABLE:
+        print_status("Auto-translate disabled (run: pip install deep-translator langdetect)")
 
     guilds = sorted(client.guilds, key=lambda g: g.name.lower())
     if not guilds:
@@ -196,6 +221,7 @@ async def _pick_channel():
                 content += " [file: " + " ".join(a.url for a in m.attachments) + "]"
             msgs.append((m.author.display_name, content, m.created_at))
         for author, content, dt in reversed(msgs):
+            content = maybe_translate(content)
             _print(f"\x1b[90m[{dt.strftime('%H:%M')}]\x1b[0m \x1b[1m<\x1b[0m\x1b[94m{author}\x1b[0m\x1b[1m>\x1b[0m {content}")
 
     print_sep("LIVE")
@@ -219,6 +245,8 @@ async def on_message(message):
 
     if message.attachments:
         content += " [file: " + " ".join(a.url for a in message.attachments) + "]"
+
+    content = maybe_translate(content)
 
     is_action = content.startswith("*") and content.endswith("*") and len(content) > 2
     if is_action:
