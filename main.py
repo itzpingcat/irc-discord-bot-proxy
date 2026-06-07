@@ -140,7 +140,7 @@ async def on_ready():
 
     print_sep("SERVERS")
     for i, g in enumerate(guilds, 1):
-        print(f"  {i:3d}. {g.name}")
+        _print(f"  \x1b[94m{i:3d}.\x1b[0m {g.name}")
     while True:
         try:
             idx = int(input("\nSelect server: ")) - 1
@@ -167,7 +167,7 @@ async def _pick_channel():
     print_sep(f"{selected_guild.name} — CHANNELS")
     for i, c in enumerate(channels, 1):
         topic = f"  — {c.topic[:50]}" if c.topic else ""
-        print(f"  {i:3d}. #{c.name}{topic}")
+        _print(f"  \x1b[94m{i:3d}.\x1b[0m \x1b[1m#\x1b[0m\x1b[94m{c.name}\x1b[0m\x1b[90m{topic}\x1b[0m")
 
     while True:
         try:
@@ -196,7 +196,7 @@ async def _pick_channel():
                 content += " [file: " + " ".join(a.url for a in m.attachments) + "]"
             msgs.append((m.author.display_name, content, m.created_at))
         for author, content, dt in reversed(msgs):
-            print(f"[{dt.strftime('%H:%M')}] <{author}> {content}")
+            _print(f"\x1b[90m[{dt.strftime('%H:%M')}]\x1b[0m \x1b[1m<\x1b[0m\x1b[94m{author}\x1b[0m\x1b[1m>\x1b[0m {content}")
 
     print_sep("LIVE")
     print_status(f"Joined #{selected_channel.name} in {selected_guild.name}")
