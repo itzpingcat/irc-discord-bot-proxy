@@ -6,7 +6,7 @@ Commands once connected:
     /me <text>       — send an action
     /topic           — show channel topic
     /list            — list channels
-    /join            — switch channel
+    /join <name|id>  — join a channel (optional: /join <name> <backfill>)
     /clear           — clear screen
     /help            — list commands
     /quit            — disconnect and exit
@@ -176,51 +176,66 @@ async def on_ready():
     print_sep("SERVERS")
     for i, g in enumerate(guilds, 1):
         _print(f"  \x1b[94m{i:3d}.\x1b[0m {g.name}")
+    loop = asyncio.get_event_loop()
     while True:
         try:
-            idx = int(input("\nSelect server: ")) - 1
+            raw = await loop.run_in_executor(None, input, "\nSelect server: ")
+            idx = int(raw) - 1
             selected_guild = guilds[idx]
             break
         except (ValueError, IndexError):
             print_error("Invalid selection.")
 
-    await _pick_channel()
+    print_status("Type /join <channel> to join a channel, or /list to see channels.")
+    asyncio.create_task(stdin_loop())
 
 
-async def _pick_channel():
+async def _join_channel(query: str, backfill: int = 50) -> None:
     global selected_channel
+
+    if selected_guild is None:
+        print_error("Not connected to a guild.")
+        return
 
     channels = [
         c for c in selected_guild.text_channels
         if c.permissions_for(selected_guild.me).view_channel
     ]
-    if not channels:
-        print_error("No accessible text channels.")
-        await client.close()
+
+    query_lower = query.lower().lstrip("#")
+    match: discord.TextChannel | None = None
+    # exact ID
+    for c in channels:
+        if str(c.id) == query_lower:
+            match = c
+            break
+    # exact name
+    if match is None:
+        for c in channels:
+            if c.name.lower() == query_lower:
+                match = c
+                break
+    # prefix
+    if match is None:
+        hits = [c for c in channels if c.name.lower().startswith(query_lower)]
+        if len(hits) == 1:
+            match = hits[0]
+        elif len(hits) > 1:
+            print_error(f"Ambiguous: {', '.join('#' + c.name for c in hits)}")
+            return
+    # substring
+    if match is None:
+        hits = [c for c in channels if query_lower in c.name.lower()]
+        if len(hits) == 1:
+            match = hits[0]
+        elif len(hits) > 1:
+            print_error(f"Ambiguous: {', '.join('#' + c.name for c in hits)}")
+            return
+    if match is None:
+        print_error(f"No channel matching '{query}'.")
         return
 
-    print_sep(f"{selected_guild.name} — CHANNELS")
-    for i, c in enumerate(channels, 1):
-        topic = f"  — {c.topic[:50]}" if c.topic else ""
-        _print(f"  \x1b[94m{i:3d}.\x1b[0m \x1b[1m#\x1b[0m\x1b[94m{c.name}\x1b[0m\x1b[90m{topic}\x1b[0m")
-
-    while True:
-        try:
-            idx = int(input("\nSelect channel: ")) - 1
-            selected_channel = channels[idx]
-            break
-        except (ValueError, IndexError):
-            print_error("Invalid selection.")
-
-    while True:
-        try:
-            raw = input("Messages to backfill [0-1000, default 50]: ").strip()
-            backfill = int(raw) if raw else 50
-            if 0 <= backfill <= 1000:
-                break
-            print_error("Must be 0-1000.")
-        except ValueError:
-            print_error("Enter a number.")
+    selected_channel = match
 
     if backfill:
         print_sep("HISTORY")
@@ -238,9 +253,6 @@ async def _pick_channel():
     print_status(f"Joined #{selected_channel.name} in {selected_guild.name}")
     if selected_channel.topic:
         print_topic(selected_channel.name, selected_channel.topic)
-    print_status("Type /help for commands.")
-
-    asyncio.create_task(stdin_loop())
 
 
 @client.event
@@ -348,7 +360,14 @@ async def handle_command(cmd: str, args: list[str]) -> None:
         print_sep()
 
     elif cmd == "join":
-        await _pick_channel()
+        if not args:
+            print_error("Usage: /join <channel name or id>  (optional: /join <name> <backfill>)")
+            return
+        backfill_arg = 50
+        if len(args) >= 2 and args[-1].isdigit():
+            backfill_arg = min(int(args[-1]), 1000)
+            args = args[:-1]
+        await _join_channel(" ".join(args), backfill=backfill_arg)
 
     elif cmd == "clear":
         print("\x1b[2J\x1b[H", end="")
@@ -370,7 +389,7 @@ async def handle_command(cmd: str, args: list[str]) -> None:
             "/me <text>          — send an action",
             "/topic              — show channel topic",
             "/list               — list channels",
-            "/join               — switch channel",
+            "/join <name|id>     — join a channel (optional: /join <name> <backfill>)",
             "/clear              — clear screen",
             "/translate <lang>   — translate outgoing msgs ending in -r (e.g. ru, de, ja)",
             "/translate off      — disable outgoing translation",
