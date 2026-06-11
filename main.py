@@ -198,7 +198,7 @@ def _fuzzy_channel(channels: list[discord.TextChannel], query: str) -> discord.T
     return None
 
 
-async def _join_channel(query: str, backfill: int = 50) -> None:
+async def _join_channel(query: str, backfill: int = 10) -> None:
     global selected_channel, selected_guild
 
     # parse optional server/channel syntax
@@ -375,7 +375,7 @@ async def handle_command(cmd: str, args: list[str]) -> None:
         if not args:
             print_error("Usage: /join <channel name or id>  (optional: /join <name> <backfill>)")
             return
-        backfill_arg = 50
+        backfill_arg = 10
         if len(args) >= 2 and args[-1].isdigit():
             backfill_arg = min(int(args[-1]), 1000)
             args = args[:-1]
