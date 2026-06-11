@@ -167,74 +167,86 @@ async def on_ready():
     if not _TRANSLATE_AVAILABLE:
         print_status("Auto-translate disabled (run: pip install deep-translator)")
 
-    guilds = sorted(client.guilds, key=lambda g: g.name.lower())
-    if not guilds:
+    if not client.guilds:
         print_error("Bot is not in any servers.")
         await client.close()
         return
 
-    print_sep("SERVERS")
-    for i, g in enumerate(guilds, 1):
-        _print(f"  \x1b[94m{i:3d}.\x1b[0m {g.name}")
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            raw = await loop.run_in_executor(None, input, "\nSelect server: ")
-            idx = int(raw) - 1
-            selected_guild = guilds[idx]
-            break
-        except (ValueError, IndexError):
-            print_error("Invalid selection.")
-
-    print_status("Type /join <channel> to join a channel, or /list to see channels.")
+    print_status("Type /join <channel> or /join <server>/<channel> to get started, /list to see all channels.")
     asyncio.create_task(stdin_loop())
 
 
-async def _join_channel(query: str, backfill: int = 50) -> None:
-    global selected_channel
-
-    if selected_guild is None:
-        print_error("Not connected to a guild.")
-        return
-
-    channels = [
-        c for c in selected_guild.text_channels
-        if c.permissions_for(selected_guild.me).view_channel
-    ]
-
-    query_lower = query.lower().lstrip("#")
-    match: discord.TextChannel | None = None
-    # exact ID
+def _fuzzy_channel(channels: list[discord.TextChannel], query: str) -> discord.TextChannel | list[discord.TextChannel] | None:
+    """Return a single match, a list of ambiguous matches, or None."""
+    q = query.lower().lstrip("#")
     for c in channels:
-        if str(c.id) == query_lower:
-            match = c
-            break
-    # exact name
-    if match is None:
-        for c in channels:
-            if c.name.lower() == query_lower:
-                match = c
+        if str(c.id) == q:
+            return c
+    for c in channels:
+        if c.name.lower() == q:
+            return c
+    hits = [c for c in channels if c.name.lower().startswith(q)]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        return hits
+    hits = [c for c in channels if q in c.name.lower()]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        return hits
+    return None
+
+
+async def _join_channel(query: str, backfill: int = 50) -> None:
+    global selected_channel, selected_guild
+
+    # parse optional server/channel syntax
+    guild_query: str | None = None
+    chan_query = query
+    if "/" in query:
+        guild_query, chan_query = query.split("/", 1)
+
+    # resolve guild
+    all_guilds = sorted(client.guilds, key=lambda g: g.name.lower())
+    if guild_query:
+        gq = guild_query.lower()
+        target_guild: discord.Guild | None = None
+        for g in all_guilds:
+            if g.name.lower() == gq or str(g.id) == gq:
+                target_guild = g
                 break
-    # prefix
-    if match is None:
-        hits = [c for c in channels if c.name.lower().startswith(query_lower)]
-        if len(hits) == 1:
-            match = hits[0]
-        elif len(hits) > 1:
-            print_error(f"Ambiguous: {', '.join('#' + c.name for c in hits)}")
+        if target_guild is None:
+            ghits = [g for g in all_guilds if g.name.lower().startswith(gq)]
+            if len(ghits) == 1:
+                target_guild = ghits[0]
+            elif len(ghits) > 1:
+                print_error(f"Ambiguous server: {', '.join(g.name for g in ghits)}")
+                return
+        if target_guild is None:
+            print_error(f"No server matching '{guild_query}'.")
             return
-    # substring
-    if match is None:
-        hits = [c for c in channels if query_lower in c.name.lower()]
-        if len(hits) == 1:
-            match = hits[0]
-        elif len(hits) > 1:
-            print_error(f"Ambiguous: {', '.join('#' + c.name for c in hits)}")
-            return
-    if match is None:
-        print_error(f"No channel matching '{query}'.")
+        search_guilds = [target_guild]
+    else:
+        search_guilds = all_guilds
+
+    # gather all visible channels across target guild(s)
+    candidates: list[tuple[discord.Guild, discord.TextChannel]] = []
+    for g in search_guilds:
+        for c in g.text_channels:
+            if c.permissions_for(g.me).view_channel:
+                candidates.append((g, c))
+
+    result = _fuzzy_channel([c for _, c in candidates], chan_query)
+    if result is None:
+        print_error(f"No channel matching '{chan_query}'.")
+        return
+    if isinstance(result, list):
+        print_error(f"Ambiguous: {', '.join(g.name + '/#' + c.name for g, c in candidates if c in result)}")
         return
 
+    match = result
+    selected_guild = match.guild
     selected_channel = match
 
     if backfill:
@@ -348,15 +360,15 @@ async def handle_command(cmd: str, args: list[str]) -> None:
             print_error("Not in a channel.")
 
     elif cmd == "list":
-        channels = [
-            c for c in selected_guild.text_channels
-            if c.permissions_for(selected_guild.me).view_channel
-        ]
         print_sep("CHANNELS")
-        for c in channels:
-            marker = " ◀" if (selected_channel and c.id == selected_channel.id) else ""
-            topic = f"  — {c.topic[:60]}" if c.topic else ""
-            _print(f"\x1b[94m  #{c.name}\x1b[0m\x1b[90m{topic}{marker}\x1b[0m")
+        for g in sorted(client.guilds, key=lambda g: g.name.lower()):
+            _print(f"\x1b[33m  {g.name}\x1b[0m")
+            for c in g.text_channels:
+                if not c.permissions_for(g.me).view_channel:
+                    continue
+                marker = " ◀" if (selected_channel and c.id == selected_channel.id) else ""
+                topic = f"  — {c.topic[:50]}" if c.topic else ""
+                _print(f"\x1b[94m    #{c.name}\x1b[0m\x1b[90m{topic}{marker}\x1b[0m")
         print_sep()
 
     elif cmd == "join":
