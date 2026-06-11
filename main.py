@@ -84,13 +84,27 @@ def resolve_mentions(content: str) -> str:
 def encode_mentions(text: str) -> str:
     if selected_guild is None:
         return text
-    name_map = {m.display_name.lower(): m for m in selected_guild.members}
+    name_map: dict[str, discord.Member] = {}
+    for m in selected_guild.members:
+        name_map[m.display_name.lower()] = m
+        name_map[m.name.lower()] = m
+        if m.global_name:
+            name_map[m.global_name.lower()] = m
 
     def replace(m: re.Match) -> str:
-        member = name_map.get(m.group(1).lower())
+        query = m.group(1).lower()
+        member = name_map.get(query)
+        if member is None:
+            # fallback: linear search catches members not in cache
+            for mem in selected_guild.members:
+                if (mem.display_name.lower() == query
+                        or mem.name.lower() == query
+                        or (mem.global_name and mem.global_name.lower() == query)):
+                    member = mem
+                    break
         return f"<@{member.id}>" if member else m.group(0)
 
-    return re.sub(r"@([\w][\w ]{0,30}[\w]|[\w]+)", replace, text)
+    return re.sub(r"@([\w.][\w .]{0,30}[\w.]|[\w.]+)", replace, text)
 
 
 # ── translation helpers ───────────────────────────────────────────────────────
